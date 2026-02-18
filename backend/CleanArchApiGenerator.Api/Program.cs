@@ -1,6 +1,12 @@
+using CleanArchApiGenerator.Application.Interfaces;
+using CleanArchApiGenerator.Infrastructure.Services;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
+builder.Services.AddScoped<IDotnetCliService, DotnetCliService>();
+builder.Services.AddScoped<IZipService, ZipService>();
+builder.Services.AddScoped<IProjectGeneratorService, ProjectGeneratorService>();
 
 builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle

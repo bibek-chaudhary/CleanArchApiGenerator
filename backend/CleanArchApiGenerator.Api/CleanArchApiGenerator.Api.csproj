@@ -11,10 +11,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="Controllers\" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\CleanArchApiGenerator.Application\CleanArchApiGenerator.Application.csproj" />
     <ProjectReference Include="..\CleanArchApiGenerator.Infrastructure\CleanArchApiGenerator.Infrastructure.csproj" />
   </ItemGroup>
