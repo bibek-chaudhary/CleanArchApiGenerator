@@ -20,7 +20,7 @@ namespace CleanArchApiGenerator.Infrastructure.Services
         }
 
         public async Task<string> GenerateAsync(GeneratorConfiguration config) {
-            var basePath = Path.Combine(Directory.GetCurrentDirectory(), "GeneratedProjects");
+            var basePath = Path.Combine(Directory.GetParent(Directory.GetCurrentDirectory())!.FullName, "GeneratedProjects");
 
             if (!Directory.Exists(basePath))
                 Directory.CreateDirectory(basePath);
@@ -47,6 +47,14 @@ namespace CleanArchApiGenerator.Infrastructure.Services
 
             await _cliService.RunAsync(projectRoot,
                 $"new classlib -n {config.ProjectName}.Infrastructure");
+
+            string[] classLibs = { "Domain", "Application", "Infrastructure" };
+            foreach (var lib in classLibs)
+            {
+                var class1Path = Path.Combine(basePath, config.ProjectName, $"{config.ProjectName}.{lib}", "Class1.cs");
+                if (File.Exists(class1Path))
+                    File.Delete(class1Path);
+            }
 
             // add projects to solution
             await _cliService.RunAsync(projectRoot,
