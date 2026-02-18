@@ -100,6 +100,12 @@ namespace CleanArchApiGenerator.Infrastructure.Services
             await _cliService.RunAsync(infraPath,
                 "add package Microsoft.EntityFrameworkCore.Tools --version 8.0.24");
 
+            await _cliService.RunAsync(infraPath,
+                "add package Microsoft.AspNetCore.Identity.EntityFrameworkCore --version 8.0.24");
+
+            await _cliService.RunAsync(infraPath,
+               "add package Microsoft.AspNetCore.Identity");
+
             await _cliService.RunAsync(apiPath,
                 "add package Microsoft.EntityFrameworkCore.Design --version 8.0.24");
 
@@ -114,6 +120,18 @@ namespace CleanArchApiGenerator.Infrastructure.Services
 
             // add default sql server connection string
             UpdateAppSettings(projectRoot, config.ProjectName);
+
+            // create application user
+            CreateApplicationUser(projectRoot, config.ProjectName);
+
+            await _cliService.RunAsync(
+                projectRoot,
+                $"ef migrations add InitialCreate --project {config.ProjectName}.Infrastructure --startup-project {config.ProjectName}.API --output-dir Persistence/Migrations");
+
+            await _cliService.RunAsync(
+                projectRoot,
+                $"ef database update --project {config.ProjectName}.Infrastructure --startup-project {config.ProjectName}.API");
+
 
             // Restore packages
             await _cliService.RunAsync(projectRoot, "restore");
@@ -171,6 +189,8 @@ if (app.Environment.IsDevelopment())
 }}
 
 app.UseHttpsRedirection();
+
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
@@ -234,9 +254,11 @@ public class ApplicationDbContext : DbContext
             var infrastructurePath = Path.Combine(projectRoot, $"{projectName}.Infrastructure");
 
             var content = $@"
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using {projectName}.Infrastructure.Identity;
 using {projectName}.Infrastructure.Persistence;
 
 namespace {projectName}.Infrastructure;
@@ -250,6 +272,10 @@ public static class DependencyInjection
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(
                 configuration.GetConnectionString(""DefaultConnection"")));
+
+        services.AddIdentity<ApplicationUser, IdentityRole>()
+            .AddEntityFrameworkStores<ApplicationDbContext>()
+            .AddDefaultTokenProviders();
 
         return services;
     }}
@@ -284,5 +310,26 @@ public static class DependencyInjection
             File.WriteAllText(appSettingsPath, content);
         }
 
+        private void CreateApplicationUser(string projectRoot, string projectName)
+        {
+            var identityFolder = Path.Combine(projectRoot, $"{projectName}.Infrastructure", "Identity");
+
+            Directory.CreateDirectory(identityFolder);
+
+            var content = $@"
+using Microsoft.AspNetCore.Identity;
+
+namespace {projectName}.Infrastructure.Identity;
+
+public class ApplicationUser : IdentityUser
+{{
+    public string? FirstName {{ get; set; }}
+    public string? LastName {{ get; set; }}
+}}
+";
+            File.WriteAllText(
+        Path.Combine(identityFolder, "ApplicationUser.cs"),
+        content);
+        }
     }
 }
