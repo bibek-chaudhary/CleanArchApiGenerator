@@ -1,6 +1,6 @@
-@CleanArchApiGenerator.Api_HostAddress = http://localhost:5243
+@CleanArchApiGenerator.API_HostAddress = http://localhost:5017
 
-GET {{CleanArchApiGenerator.Api_HostAddress}}/weatherforecast/
+GET {{CleanArchApiGenerator.API_HostAddress}}/weatherforecast/
 Accept: application/json
 
 ###
