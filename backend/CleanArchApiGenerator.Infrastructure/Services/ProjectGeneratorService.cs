@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml.Serialization;
 
 namespace CleanArchApiGenerator.Infrastructure.Services
 {
@@ -37,7 +38,7 @@ namespace CleanArchApiGenerator.Infrastructure.Services
 
             // create projects
             await _cliService.RunAsync(projectRoot,
-    $"new webapi -n {config.ProjectName}.API -f net8.0");
+                $"new webapi -n {config.ProjectName}.API -f net8.0");
 
             await _cliService.RunAsync(projectRoot,
                 $"new classlib -n {config.ProjectName}.Application -f net8.0");
@@ -89,8 +90,30 @@ namespace CleanArchApiGenerator.Infrastructure.Services
             await _cliService.RunAsync(appPath,
                 $"add reference ../{config.ProjectName}.Domain/{config.ProjectName}.Domain.csproj");
 
+            // addd required nuget packages
+            await _cliService.RunAsync(infraPath,
+                "add package Microsoft.EntityFrameworkCore --version 8.0.24");
+
+            await _cliService.RunAsync(infraPath,
+                "add package Microsoft.EntityFrameworkCore.SqlServer --version 8.0.24");
+
+            await _cliService.RunAsync(infraPath,
+                "add package Microsoft.EntityFrameworkCore.Tools --version 8.0.24");
+
+            await _cliService.RunAsync(apiPath,
+                "add package Microsoft.EntityFrameworkCore.Design --version 8.0.24");
+
+            // clean api project
             CleanApiProject(projectRoot, config.ProjectName);
 
+            // add dbContext
+            CreateDbContext(projectRoot, config.ProjectName);
+
+            // add infrastructure dependency injection
+            CreateInfrastructureDI(projectRoot, config.ProjectName);
+
+            // add default sql server connection string
+            UpdateAppSettings(projectRoot, config.ProjectName);
 
             // Restore packages
             await _cliService.RunAsync(projectRoot, "restore");
@@ -129,12 +152,15 @@ namespace CleanArchApiGenerator.Infrastructure.Services
 
             var programContent = $@"
 using Microsoft.AspNetCore.Mvc;
+using {projectName}.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();
 
@@ -152,7 +178,7 @@ app.MapControllers();
 app.Run();
 ";
 
-            File.WriteAllText(programPath, programContent);
+             File.WriteAllText(programPath, programContent);
 
             // Create BaseApiController
             var baseControllerPath = Path.Combine(controllerFolder, "BaseApiController.cs");
@@ -170,6 +196,92 @@ public abstract class BaseApiController : ControllerBase
 ";
 
             File.WriteAllText(baseControllerPath, baseControllerContent);
+        }
+
+        private void CreateDbContext(string projectRoot, string projectName)
+        {
+            var infrastructurePath = Path.Combine(projectRoot, $"{projectName}.Infrastructure");
+            var persistenceFolder = Path.Combine(infrastructurePath, "Persistence");
+
+            Directory.CreateDirectory(persistenceFolder);
+
+            var dbContextContent = $@"
+using Microsoft.EntityFrameworkCore;
+
+namespace {projectName}.Infrastructure.Persistence;
+
+public class ApplicationDbContext : DbContext
+{{
+    public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
+        : base(options)
+    {{
+    }}
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {{
+        base.OnModelCreating(modelBuilder);
+    }}
+}}
+";
+
+            File.WriteAllText(
+                Path.Combine(persistenceFolder, "ApplicationDbContext.cs"),
+                dbContextContent);
+        }
+
+        private void CreateInfrastructureDI(string projectRoot, string projectName)
+        {
+            var infrastructurePath = Path.Combine(projectRoot, $"{projectName}.Infrastructure");
+
+            var content = $@"
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using {projectName}.Infrastructure.Persistence;
+
+namespace {projectName}.Infrastructure;
+
+public static class DependencyInjection
+{{
+    public static IServiceCollection AddInfrastructure(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {{
+        services.AddDbContext<ApplicationDbContext>(options =>
+            options.UseSqlServer(
+                configuration.GetConnectionString(""DefaultConnection"")));
+
+        return services;
+    }}
+}}
+";
+
+            File.WriteAllText(
+                Path.Combine(infrastructurePath, "DependencyInjection.cs"),
+                content);
+        }
+
+        private void UpdateAppSettings(string projectRoot, string projectName)
+        {
+            var apiPath = Path.Combine(projectRoot, $"{projectName}.API");
+            var appSettingsPath = Path.Combine(apiPath, "appsettings.json");
+
+            var content = $@"
+{{
+  ""ConnectionStrings"": {{
+    ""DefaultConnection"": ""Server=localhost\\SQLEXPRESS;Database={projectName}Db;Trusted_Connection=True;TrustServerCertificate=True;""
+  }},
+  ""Logging"": {{
+    ""LogLevel"": {{
+      ""Default"": ""Information"",
+      ""Microsoft.AspNetCore"": ""Warning""
+    }}
+  }},
+  ""AllowedHosts"": ""*""
+}}
+";
+
+            File.WriteAllText(appSettingsPath, content);
         }
 
     }
