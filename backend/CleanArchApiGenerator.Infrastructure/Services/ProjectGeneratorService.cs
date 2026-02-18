@@ -37,16 +37,16 @@ namespace CleanArchApiGenerator.Infrastructure.Services
 
             // create projects
             await _cliService.RunAsync(projectRoot,
-           $"new webapi -n {config.ProjectName}.API");
+    $"new webapi -n {config.ProjectName}.API -f net8.0");
 
             await _cliService.RunAsync(projectRoot,
-                $"new classlib -n {config.ProjectName}.Application");
+                $"new classlib -n {config.ProjectName}.Application -f net8.0");
 
             await _cliService.RunAsync(projectRoot,
-                $"new classlib -n {config.ProjectName}.Domain");
+                $"new classlib -n {config.ProjectName}.Domain -f net8.0");
 
             await _cliService.RunAsync(projectRoot,
-                $"new classlib -n {config.ProjectName}.Infrastructure");
+                $"new classlib -n {config.ProjectName}.Infrastructure -f net8.0");
 
             string[] classLibs = { "Domain", "Application", "Infrastructure" };
             foreach (var lib in classLibs)
@@ -89,6 +89,9 @@ namespace CleanArchApiGenerator.Infrastructure.Services
             await _cliService.RunAsync(appPath,
                 $"add reference ../{config.ProjectName}.Domain/{config.ProjectName}.Domain.csproj");
 
+            CleanApiProject(projectRoot, config.ProjectName);
+
+
             // Restore packages
             await _cliService.RunAsync(projectRoot, "restore");
 
@@ -98,5 +101,76 @@ namespace CleanArchApiGenerator.Infrastructure.Services
             //zip and return path
             return _zipService.CreateZip(projectRoot, config.ProjectName);
         }
+
+        private void CleanApiProject(string projectRoot, string projectName)
+        {
+            var apiPath = Path.Combine(projectRoot, $"{projectName}.API");
+
+            // Ensure API project exists
+            if (!Directory.Exists(apiPath))
+                throw new DirectoryNotFoundException($"API project not found: {apiPath}");
+
+            // Remove WeatherForecast model
+            var weatherModel = Path.Combine(apiPath, "WeatherForecast.cs");
+            if (File.Exists(weatherModel))
+                File.Delete(weatherModel);
+
+            // Remove WeatherForecast controller
+            var weatherController = Path.Combine(apiPath, "Controllers", "WeatherForecastController.cs");
+            if (File.Exists(weatherController))
+                File.Delete(weatherController);
+
+            // Ensure Controllers folder exists
+            var controllerFolder = Path.Combine(apiPath, "Controllers");
+            Directory.CreateDirectory(controllerFolder);
+
+            // Replace Program.cs
+            var programPath = Path.Combine(apiPath, "Program.cs");
+
+            var programContent = $@"
+using Microsoft.AspNetCore.Mvc;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}}
+
+app.UseHttpsRedirection();
+app.UseAuthorization();
+
+app.MapControllers();
+
+app.Run();
+";
+
+            File.WriteAllText(programPath, programContent);
+
+            // Create BaseApiController
+            var baseControllerPath = Path.Combine(controllerFolder, "BaseApiController.cs");
+
+            var baseControllerContent = $@"
+using Microsoft.AspNetCore.Mvc;
+
+namespace {projectName}.API.Controllers;
+
+[ApiController]
+[Route(""api/[controller]"")]
+public abstract class BaseApiController : ControllerBase
+{{
+}}
+";
+
+            File.WriteAllText(baseControllerPath, baseControllerContent);
+        }
+
     }
 }
