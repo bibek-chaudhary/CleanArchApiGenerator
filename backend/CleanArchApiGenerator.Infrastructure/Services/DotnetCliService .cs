@@ -24,14 +24,30 @@ namespace CleanArchApiGenerator.Infrastructure.Services
                 }
             };
 
+            var outputBuilder = new StringBuilder();
+            var errorBuilder = new StringBuilder();
+
+            process.OutputDataReceived += (sender, args) => {
+                if (args.Data != null)
+                    outputBuilder.AppendLine(args.Data);
+            };
+
+            process.ErrorDataReceived += (sender, args) => {
+                if (args.Data != null)
+                    errorBuilder.AppendLine(args.Data);
+            };
+
             process.Start();
+
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
 
             await process.WaitForExitAsync();
 
             if(process.ExitCode != 0)
             {
-                var error = await process.StandardError.ReadToEndAsync();
-                throw new Exception($"dotnet CLI command failed with exit code {process.ExitCode}: {error}");
+                throw new Exception(
+                $"Dotnet CLI failed.\nError:\n{errorBuilder}\nOutput:\n{outputBuilder}");
             }
         }
     }

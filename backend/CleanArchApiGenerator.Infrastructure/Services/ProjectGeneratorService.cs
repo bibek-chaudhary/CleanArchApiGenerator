@@ -81,6 +81,12 @@ namespace CleanArchApiGenerator.Infrastructure.Services
             await _cliService.RunAsync(appPath,
                 $"add reference ../{config.ProjectName}.Domain/{config.ProjectName}.Domain.csproj");
 
+            // Restore packages
+            await _cliService.RunAsync(projectRoot, "restore");
+
+            // Build solution
+            await _cliService.RunAsync(projectRoot, "build");
+
             //zip and return path
             return _zipService.CreateZip(projectRoot, config.ProjectName);
         }
