@@ -72,6 +72,7 @@ namespace CleanArchApiGenerator.Infrastructure.Services
 
             // add project references
             var apiPath = Path.Combine(projectRoot, $"{config.ProjectName}.API");
+            var domainPath = Path.Combine(projectRoot, $"{config.ProjectName}.Domain");
             var appPath = Path.Combine(projectRoot, $"{config.ProjectName}.Application");
             var infraPath = Path.Combine(projectRoot, $"{config.ProjectName}.Infrastructure");
 
@@ -109,6 +110,9 @@ namespace CleanArchApiGenerator.Infrastructure.Services
             await _cliService.RunAsync(apiPath,
                 "add package Microsoft.EntityFrameworkCore.Design --version 8.0.24");
 
+            await _cliService.RunAsync(domainPath,
+                "add package Microsoft.AspNetCore.Identity.EntityFrameworkCore --version 8.0.24");
+
             // clean api project
             CleanApiProject(projectRoot, config.ProjectName);
 
@@ -124,6 +128,13 @@ namespace CleanArchApiGenerator.Infrastructure.Services
             // create application user
             CreateApplicationUser(projectRoot, config.ProjectName);
 
+            // Restore packages
+            await _cliService.RunAsync(projectRoot, "restore");
+
+            // Build solution
+            await _cliService.RunAsync(projectRoot, "build");
+
+            // migrations and database update
             await _cliService.RunAsync(
                 projectRoot,
                 $"ef migrations add InitialCreate --project {config.ProjectName}.Infrastructure --startup-project {config.ProjectName}.API --output-dir Persistence/Migrations");
@@ -132,12 +143,6 @@ namespace CleanArchApiGenerator.Infrastructure.Services
                 projectRoot,
                 $"ef database update --project {config.ProjectName}.Infrastructure --startup-project {config.ProjectName}.API");
 
-
-            // Restore packages
-            await _cliService.RunAsync(projectRoot, "restore");
-
-            // Build solution
-            await _cliService.RunAsync(projectRoot, "build");
 
             //zip and return path
             return _zipService.CreateZip(projectRoot, config.ProjectName);
@@ -226,11 +231,13 @@ public abstract class BaseApiController : ControllerBase
             Directory.CreateDirectory(persistenceFolder);
 
             var dbContextContent = $@"
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using {projectName}.Domain.Entities;
 
 namespace {projectName}.Infrastructure.Persistence;
 
-public class ApplicationDbContext : DbContext
+public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
 {{
     public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
         : base(options)
@@ -258,7 +265,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using {projectName}.Infrastructure.Identity;
+using {projectName}.Domain.Entities;
 using {projectName}.Infrastructure.Persistence;
 
 namespace {projectName}.Infrastructure;
@@ -312,14 +319,14 @@ public static class DependencyInjection
 
         private void CreateApplicationUser(string projectRoot, string projectName)
         {
-            var identityFolder = Path.Combine(projectRoot, $"{projectName}.Infrastructure", "Identity");
+            var identityFolder = Path.Combine(projectRoot, $"{projectName}.Domain", "Entities");
 
             Directory.CreateDirectory(identityFolder);
 
             var content = $@"
 using Microsoft.AspNetCore.Identity;
 
-namespace {projectName}.Infrastructure.Identity;
+namespace {projectName}.Domain.Entities;
 
 public class ApplicationUser : IdentityUser
 {{
