@@ -137,6 +137,15 @@ namespace CleanArchApiGenerator.Infrastructure.Services
             // create auth controller
             CreateAuthController(projectRoot, config.ProjectName);
 
+            // create api error response
+            CreateApiErrorResponse(projectRoot, config.ProjectName);
+
+            // create exception middleware
+            CreateExceptionMiddleware(projectRoot, config.ProjectName);
+
+            // create middleware extension
+            CreateMiddlewareExtensions(projectRoot, config.ProjectName);
+
             // Restore packages
             await _cliService.RunAsync(projectRoot, "restore");
 
@@ -188,6 +197,7 @@ using {projectName}.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using {projectName}.API.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -221,6 +231,8 @@ builder.Services.AddAuthentication(options =>
 }});
 
 var app = builder.Build();
+
+app.UseGlobalExceptionHandling();
 
 if (app.Environment.IsDevelopment())
 {{
@@ -511,5 +523,126 @@ public class AuthController : BaseApiController
 
         }
 
+        private void CreateApiErrorResponse(string projectRoot, string projectName)
+        {
+            var commonFolder = Path.Combine(projectRoot, $"{projectName}.API", "Common");
+
+            Directory.CreateDirectory(commonFolder);
+
+            var content = $@"
+namespace {projectName}.API.Common;
+
+public class ApiErrorResponse
+{{
+    public bool Success {{ get; set; }} = false;
+    public string Message {{ get; set; }} = ""An error occurred."";
+    public object? Errors {{ get; set; }}
+}}
+";
+
+            File.WriteAllText(Path.Combine(commonFolder, "ApiErrorResponse.cs"), content);
+        }
+
+        private void CreateExceptionMiddleware(string projectRoot, string projectName)
+        {
+            var middlewareFolder = Path.Combine(projectRoot, $"{projectName}.API", "Middleware");
+
+            Directory.CreateDirectory(middlewareFolder);
+
+            var content = $@"
+using System.Net;
+using System.Text.Json;
+using {projectName}.API.Common;
+
+namespace {projectName}.API.Middleware;
+
+public class ExceptionMiddleware
+{{
+    private readonly RequestDelegate _next;
+    private readonly ILogger<ExceptionMiddleware> _logger;
+
+    public ExceptionMiddleware(
+        RequestDelegate next,
+        ILogger<ExceptionMiddleware> logger)
+    {{
+        _next = next;
+        _logger = logger;
+    }}
+
+    public async Task InvokeAsync(HttpContext context)
+    {{
+        try
+        {{
+            await _next(context);
+        }}
+        catch (Exception ex)
+        {{
+            _logger.LogError(ex, ""Unhandled exception occurred."");
+
+            await HandleExceptionAsync(context, ex);
+        }}
+    }}
+
+    private static async Task HandleExceptionAsync(
+        HttpContext context,
+        Exception exception)
+    {{
+        var response = context.Response;
+        response.ContentType = ""application/json"";
+
+        var apiError = new ApiErrorResponse();
+
+        switch (exception)
+        {{
+            case UnauthorizedAccessException:
+                response.StatusCode = (int)HttpStatusCode.Unauthorized;
+                apiError.Message = ""Unauthorized access."";
+                break;
+
+            case ArgumentException:
+                response.StatusCode = (int)HttpStatusCode.BadRequest;
+                apiError.Message = exception.Message;
+                break;
+
+            default:
+                response.StatusCode = (int)HttpStatusCode.InternalServerError;
+                apiError.Message = ""Internal server error."";
+                break;
+        }}
+
+        var json = JsonSerializer.Serialize(apiError);
+
+        await response.WriteAsync(json);
+    }}
+}}
+";
+
+            File.WriteAllText(Path.Combine(middlewareFolder, "ExceptionMiddleware.cs"), content);
+        }
+
+        private void CreateMiddlewareExtensions(string projectRoot, string projectName)
+        {
+            var middlewareFolder = Path.Combine(
+                projectRoot,
+                $"{projectName}.API",
+                "Middleware");
+
+            var content = $@"
+namespace {projectName}.API.Middleware;
+
+public static class MiddlewareExtensions
+{{
+    public static IApplicationBuilder UseGlobalExceptionHandling(
+        this IApplicationBuilder app)
+    {{
+        return app.UseMiddleware<ExceptionMiddleware>();
+    }}
+}}
+";
+
+            File.WriteAllText(
+                Path.Combine(middlewareFolder, "MiddlewareExtensions.cs"),
+                content);
+        }
     }
 }
