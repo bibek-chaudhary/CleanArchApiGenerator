@@ -110,6 +110,9 @@ namespace CleanArchApiGenerator.Infrastructure.Services
             await _cliService.RunAsync(apiPath,
                 "add package Microsoft.EntityFrameworkCore.Design --version 8.0.24");
 
+            await _cliService.RunAsync(apiPath,
+                "add package Microsoft.AspNetCore.Authentication.JwtBearer --version 8.0.24");
+
             await _cliService.RunAsync(domainPath,
                 "add package Microsoft.AspNetCore.Identity.EntityFrameworkCore --version 8.0.24");
 
@@ -127,6 +130,12 @@ namespace CleanArchApiGenerator.Infrastructure.Services
 
             // create application user
             CreateApplicationUser(projectRoot, config.ProjectName);
+
+            // create jwt token service
+            CreateJwtTokenService(projectRoot, config.ProjectName);
+
+            // create auth controller
+            CreateAuthController(projectRoot, config.ProjectName);
 
             // Restore packages
             await _cliService.RunAsync(projectRoot, "restore");
@@ -176,6 +185,9 @@ namespace CleanArchApiGenerator.Infrastructure.Services
             var programContent = $@"
 using Microsoft.AspNetCore.Mvc;
 using {projectName}.Infrastructure;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -184,6 +196,29 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 builder.Services.AddInfrastructure(builder.Configuration);
+
+var jwtSettings = builder.Configuration.GetSection(""Jwt"");
+
+builder.Services.AddAuthentication(options =>
+{{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+}})
+.AddJwtBearer(options =>
+{{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {{
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+
+        ValidIssuer = jwtSettings[""Issuer""],
+        ValidAudience = jwtSettings[""Audience""],
+        IssuerSigningKey = new SymmetricSecurityKey(
+            Encoding.UTF8.GetBytes(jwtSettings[""Key""]!))
+    }};
+}});
 
 var app = builder.Build();
 
@@ -266,6 +301,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using {projectName}.Domain.Entities;
+using {projectName}.Infrastructure.Identity;
 using {projectName}.Infrastructure.Persistence;
 
 namespace {projectName}.Infrastructure;
@@ -283,6 +319,8 @@ public static class DependencyInjection
         services.AddIdentity<ApplicationUser, IdentityRole>()
             .AddEntityFrameworkStores<ApplicationDbContext>()
             .AddDefaultTokenProviders();
+
+        services.AddScoped<JwtTokenService>();
 
         return services;
     }}
@@ -303,6 +341,12 @@ public static class DependencyInjection
 {{
   ""ConnectionStrings"": {{
     ""DefaultConnection"": ""Server=localhost\\SQLEXPRESS;Database={projectName}Db;Trusted_Connection=True;TrustServerCertificate=True;""
+  }},
+   ""Jwt"": {{
+    ""Key"": ""THIS_IS_A_SUPER_SECRET_KEY_CHANGE_IT"",
+    ""Issuer"": ""CleanArchApi"",
+    ""Audience"": ""CleanArchApiUsers"",
+    ""ExpiryMinutes"": 60
   }},
   ""Logging"": {{
     ""LogLevel"": {{
@@ -338,5 +382,134 @@ public class ApplicationUser : IdentityUser
         Path.Combine(identityFolder, "ApplicationUser.cs"),
         content);
         }
+
+        private void CreateJwtTokenService(string projectRoot, string projectName)
+        {
+            var identityFolder = Path.Combine(
+                projectRoot,
+                $"{projectName}.Infrastructure",
+                "Identity");
+
+            Directory.CreateDirectory(identityFolder);
+
+            var content = $@"
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Configuration;
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using {projectName}.Domain.Entities;
+using System.IdentityModel.Tokens.Jwt;
+
+namespace {projectName}.Infrastructure.Identity;
+
+public class JwtTokenService
+{{
+    private readonly IConfiguration _configuration;
+
+    public JwtTokenService(IConfiguration configuration)
+    {{
+        _configuration = configuration;
+    }}
+
+    public string GenerateToken(ApplicationUser user)
+    {{
+        var jwtSettings = _configuration.GetSection(""Jwt"");
+
+        var claims = new List<Claim>
+        {{
+            new Claim(JwtRegisteredClaimNames.Sub, user.Id),
+            new Claim(JwtRegisteredClaimNames.Email, user.Email ?? """"),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+        }};
+
+        var key = new SymmetricSecurityKey(
+            Encoding.UTF8.GetBytes(jwtSettings[""Key""]!));
+
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var expires = DateTime.UtcNow.AddMinutes(
+            double.Parse(jwtSettings[""ExpiryMinutes""]!));
+
+        var token = new JwtSecurityToken(
+            issuer: jwtSettings[""Issuer""],
+            audience: jwtSettings[""Audience""],
+            claims: claims,
+            expires: expires,
+            signingCredentials: creds);
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }}
+}}
+";
+
+            File.WriteAllText(
+                Path.Combine(identityFolder, "JwtTokenService.cs"),
+                content);
+        }
+
+        private void CreateAuthController(string projectRoot, string projectName)
+        {
+            var controllerFolder = Path.Combine(projectRoot, $"{projectName}.API", "Controllers");
+            var content = $@"
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using {projectName}.Infrastructure.Identity;
+using {projectName}.Domain.Entities;
+
+namespace {projectName}.API.Controllers;
+
+public class AuthController : BaseApiController
+{{
+    private readonly UserManager<ApplicationUser> _userManager;
+    private readonly JwtTokenService _tokenService;
+
+    public AuthController(
+        UserManager<ApplicationUser> userManager,
+        JwtTokenService tokenService)
+    {{
+        _userManager = userManager;
+        _tokenService = tokenService;
+    }}
+
+    [HttpPost(""register"")]
+    public async Task<IActionResult> Register(string email, string password)
+    {{
+        var user = new ApplicationUser
+        {{
+            UserName = email,
+            Email = email
+        }};
+
+        var result = await _userManager.CreateAsync(user, password);
+
+        if (!result.Succeeded)
+            return BadRequest(result.Errors);
+
+        return Ok(""User registered"");
+    }}
+
+    [HttpPost(""login"")]
+    public async Task<IActionResult> Login(string email, string password)
+    {{
+        var user = await _userManager.FindByEmailAsync(email);
+
+        if (user == null ||
+            !await _userManager.CheckPasswordAsync(user, password))
+            return Unauthorized();
+
+        var token = _tokenService.GenerateToken(user);
+
+        return Ok(new {{ token }});
+    }}
+}}
+";
+            File.WriteAllText(
+                Path.Combine(controllerFolder, "AuthController.cs"),
+                content);
+
+        }
+
     }
 }
