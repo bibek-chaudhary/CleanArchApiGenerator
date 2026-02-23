@@ -113,6 +113,12 @@ namespace CleanArchApiGenerator.Infrastructure.Services
             await _cliService.RunAsync(apiPath,
                 "add package Microsoft.AspNetCore.Authentication.JwtBearer --version 8.0.24");
 
+            await _cliService.RunAsync(apiPath,
+                "add package FluentValidation.AspNetCore");
+
+            await _cliService.RunAsync(appPath,
+                "add package FluentValidation");
+
             await _cliService.RunAsync(domainPath,
                 "add package Microsoft.AspNetCore.Identity.EntityFrameworkCore --version 8.0.24");
 
@@ -145,6 +151,12 @@ namespace CleanArchApiGenerator.Infrastructure.Services
 
             // create middleware extension
             CreateMiddlewareExtensions(projectRoot, config.ProjectName);
+
+            // create login request dto
+            CreateLoginRequest(projectRoot, config.ProjectName);
+
+            // create fluent validation
+            CreateFluentValidation(projectRoot, config.ProjectName);
 
             // Restore packages
             await _cliService.RunAsync(projectRoot, "restore");
@@ -193,11 +205,15 @@ namespace CleanArchApiGenerator.Infrastructure.Services
 
             var programContent = $@"
 using Microsoft.AspNetCore.Mvc;
-using {projectName}.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using FluentValidation;
+using FluentValidation.AspNetCore;
+using System.Reflection;
+using {projectName}.Infrastructure;
 using {projectName}.API.Middleware;
+using {projectName}.Application.Validators;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -229,6 +245,11 @@ builder.Services.AddAuthentication(options =>
             Encoding.UTF8.GetBytes(jwtSettings[""Key""]!))
     }};
 }});
+
+builder.Services.AddFluentValidationAutoValidation();
+builder.Services.AddFluentValidationClientsideAdapters();
+
+builder.Services.AddValidatorsFromAssemblyContaining<LoginRequestValidator>();
 
 var app = builder.Build();
 
@@ -469,6 +490,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using {projectName}.Infrastructure.Identity;
 using {projectName}.Domain.Entities;
+using {projectName}.Application.DTOs.Auth;
 
 namespace {projectName}.API.Controllers;
 
@@ -503,12 +525,12 @@ public class AuthController : BaseApiController
     }}
 
     [HttpPost(""login"")]
-    public async Task<IActionResult> Login(string email, string password)
+    public async Task<IActionResult> Login(LoginRequest request)
     {{
-        var user = await _userManager.FindByEmailAsync(email);
+        var user = await _userManager.FindByEmailAsync(request.Email);
 
         if (user == null ||
-            !await _userManager.CheckPasswordAsync(user, password))
+            !await _userManager.CheckPasswordAsync(user, request.Password))
             return Unauthorized();
 
         var token = _tokenService.GenerateToken(user);
@@ -642,6 +664,58 @@ public static class MiddlewareExtensions
 
             File.WriteAllText(
                 Path.Combine(middlewareFolder, "MiddlewareExtensions.cs"),
+                content);
+        }
+
+        private void CreateLoginRequest(string projectRoot, string projectName)
+        {
+            var authFolder = Path.Combine(projectRoot, $"{projectName}.Application", "DTOs","Auth");
+            Directory.CreateDirectory(authFolder);
+            var content = $@"
+namespace {projectName}.Application.DTOs.Auth
+{{
+    public class LoginRequest
+    {{
+        public string Email {{ get; set; }} = default!;
+        public string Password {{ get; set; }} = default!;
+    }}
+}}
+";
+
+            File.WriteAllText(
+                Path.Combine(authFolder, "LoginRequest.cs"),
+                content);
+        }
+
+        private void CreateFluentValidation(string projectRoot, string projectName)
+        {
+            var validatorsFolder = Path.Combine(projectRoot, $"{projectName}.Application", "Validators");
+            Directory.CreateDirectory(validatorsFolder);
+            var content = $@"
+using FluentValidation;
+using {projectName}.Application.DTOs.Auth;
+
+namespace {projectName}.Application.Validators
+{{
+    public class LoginRequestValidator : AbstractValidator<LoginRequest>
+    {{
+        public LoginRequestValidator()
+        {{
+            RuleFor(x => x.Email)
+                .NotEmpty()
+                .EmailAddress();
+
+            RuleFor(x => x.Password)
+                .NotEmpty()
+                .MinimumLength(6);
+        }}
+    }}
+}}
+
+";
+
+            File.WriteAllText(
+                Path.Combine(validatorsFolder, "LoginRequestValidator.cs"),
                 content);
         }
     }
