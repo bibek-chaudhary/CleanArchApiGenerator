@@ -1,4 +1,4 @@
-# 🚀 Clean Architecture API Boilerplate Generator
+# 🚀 Enterprise-Ready Backend Starter Platform (.NET Clean Architecture)
 
 > ⚡ Generate production-ready ASP.NET Core Web APIs in seconds — powered by Clean Architecture, Identity, JWT, EF Core, and SQL Server.
 
