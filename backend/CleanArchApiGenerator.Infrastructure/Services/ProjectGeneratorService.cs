@@ -143,8 +143,8 @@ namespace CleanArchApiGenerator.Infrastructure.Services
             // create auth controller
             CreateAuthController(projectRoot, config.ProjectName);
 
-            // create api error response
-            CreateApiErrorResponse(projectRoot, config.ProjectName);
+            // create api response
+            CreateApiResponse(projectRoot, config.ProjectName);
 
             // create exception middleware
             CreateExceptionMiddleware(projectRoot, config.ProjectName);
@@ -214,6 +214,8 @@ using System.Reflection;
 using {projectName}.Infrastructure;
 using {projectName}.API.Middleware;
 using {projectName}.Application.Validators;
+using {projectName}.Application.Common.Results;
+
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -250,6 +252,21 @@ builder.Services.AddFluentValidationAutoValidation();
 builder.Services.AddFluentValidationClientsideAdapters();
 
 builder.Services.AddValidatorsFromAssemblyContaining<LoginRequestValidator>();
+
+builder.Services.Configure<ApiBehaviorOptions>(options =>
+{{
+    options.InvalidModelStateResponseFactory = context =>
+    {{
+        var errors = context.ModelState
+            .Values
+            .SelectMany(v => v.Errors)
+            .Select(e => e.ErrorMessage)
+            .ToList();
+
+        return new BadRequestObjectResult(
+            Result.Fail(errors, ""Validation Failed""));
+    }};
+}});
 
 var app = builder.Build();
 
@@ -491,6 +508,7 @@ using Microsoft.AspNetCore.Mvc;
 using {projectName}.Infrastructure.Identity;
 using {projectName}.Domain.Entities;
 using {projectName}.Application.DTOs.Auth;
+using {projectName}.Application.Common.Results;
 
 namespace {projectName}.API.Controllers;
 
@@ -521,21 +539,18 @@ public class AuthController : BaseApiController
         if (!result.Succeeded)
             return BadRequest(result.Errors);
 
-        return Ok(""User registered"");
+        return Ok(Result.Ok(""User registered""));
     }}
 
     [HttpPost(""login"")]
     public async Task<IActionResult> Login(LoginRequest request)
     {{
         var user = await _userManager.FindByEmailAsync(request.Email);
-
-        if (user == null ||
-            !await _userManager.CheckPasswordAsync(user, request.Password))
-            return Unauthorized();
+        if (user == null || !await _userManager.CheckPasswordAsync(user, request.Password))
+            return Unauthorized(Result.Fail(new List<string>{{ ""Invalid credentials"" }}, ""Authentication Failed""));
 
         var token = _tokenService.GenerateToken(user);
-
-        return Ok(new {{ token }});
+        return Ok(Result<string>.Ok(token, ""Login Successful""));
     }}
 }}
 ";
@@ -545,24 +560,65 @@ public class AuthController : BaseApiController
 
         }
 
-        private void CreateApiErrorResponse(string projectRoot, string projectName)
+        private void CreateApiResponse(string projectRoot, string projectName)
         {
-            var commonFolder = Path.Combine(projectRoot, $"{projectName}.API", "Common");
+            var resultFolder = Path.Combine(projectRoot, $"{projectName}.Application", "Common", "Results");
 
-            Directory.CreateDirectory(commonFolder);
+            Directory.CreateDirectory(resultFolder);
 
             var content = $@"
-namespace {projectName}.API.Common;
+namespace {projectName}.Application.Common.Results;
 
-public class ApiErrorResponse
+public class Result<T>
 {{
-    public bool Success {{ get; set; }} = false;
-    public string Message {{ get; set; }} = ""An error occurred."";
-    public object? Errors {{ get; set; }}
+    public bool Success {{ get; private set; }}
+    public string? Message {{ get; private set; }}
+    public T? Data {{ get; private set; }}
+    public List<string>? Errors {{ get; private set; }}
+
+    private Result() {{ }}
+
+    public static Result<T> Ok(T data, string? message = null) => new Result<T>
+    {{
+        Success = true,
+        Data = data,
+        Message = message
+    }};
+
+    public static Result<T> Fail(List<string> errors, string? message = null) => new Result<T>
+    {{
+        Success = false,
+        Errors = errors,
+        Message = message
+    }};
+}}
+
+public class Result
+{{
+    public bool Success {{ get; private set; }}
+    public string? Message {{ get; private set; }}
+    public List<string>? Errors {{ get; private set; }}
+
+    private Result() {{ }}
+
+    public static Result Ok(string? message = null) => new Result
+    {{
+        Success = true,
+        Message = message
+    }};
+
+    public static Result Fail(List<string> errors, string? message = null) => new Result
+    {{
+        Success = false,
+        Errors = errors,
+        Message = message
+    }};
 }}
 ";
 
-            File.WriteAllText(Path.Combine(commonFolder, "ApiErrorResponse.cs"), content);
+            File.WriteAllText(
+                Path.Combine(resultFolder, "Result.cs"),
+                content);
         }
 
         private void CreateExceptionMiddleware(string projectRoot, string projectName)
@@ -574,7 +630,7 @@ public class ApiErrorResponse
             var content = $@"
 using System.Net;
 using System.Text.Json;
-using {projectName}.API.Common;
+using {projectName}.Application.Common.Results;
 
 namespace {projectName}.API.Middleware;
 
@@ -605,36 +661,31 @@ public class ExceptionMiddleware
         }}
     }}
 
-    private static async Task HandleExceptionAsync(
-        HttpContext context,
-        Exception exception)
+    private static async Task HandleExceptionAsync(HttpContext context, Exception exception)
     {{
-        var response = context.Response;
-        response.ContentType = ""application/json"";
-
-        var apiError = new ApiErrorResponse();
+        context.Response.ContentType = ""application/json"";
+    
+        Result? response;
 
         switch (exception)
         {{
             case UnauthorizedAccessException:
-                response.StatusCode = (int)HttpStatusCode.Unauthorized;
-                apiError.Message = ""Unauthorized access."";
+                context.Response.StatusCode = (int)HttpStatusCode.Unauthorized;
+                response = Result.Fail(new List<string>{{ ""Unauthorized access."" }}, ""Access Denied"");
                 break;
 
-            case ArgumentException:
-                response.StatusCode = (int)HttpStatusCode.BadRequest;
-                apiError.Message = exception.Message;
+            case ArgumentException argEx:
+                context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
+                response = Result.Fail(new List<string>{{ argEx.Message }}, ""Bad Request"");
                 break;
 
             default:
-                response.StatusCode = (int)HttpStatusCode.InternalServerError;
-                apiError.Message = ""Internal server error."";
+                context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
+                response = Result.Fail(new List<string>{{ ""An unexpected error occurred."" }}, ""Internal Server Error"");
                 break;
         }}
 
-        var json = JsonSerializer.Serialize(apiError);
-
-        await response.WriteAsync(json);
+        await context.Response.WriteAsJsonAsync(response);
     }}
 }}
 ";
@@ -718,5 +769,6 @@ namespace {projectName}.Application.Validators
                 Path.Combine(validatorsFolder, "LoginRequestValidator.cs"),
                 content);
         }
+
     }
 }
