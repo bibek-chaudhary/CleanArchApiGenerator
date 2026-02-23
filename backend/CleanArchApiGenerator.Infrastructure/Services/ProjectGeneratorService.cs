@@ -211,6 +211,7 @@ using System.Text;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using System.Reflection;
+using Microsoft.OpenApi.Models;
 using {projectName}.Infrastructure;
 using {projectName}.API.Middleware;
 using {projectName}.Application.Validators;
@@ -221,7 +222,41 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(c =>
+{{
+    c.SwaggerDoc(""v1"", new OpenApiInfo
+    {{
+        Title = ""YourProject API"",
+        Version = ""v1"",
+        Description = ""Enterprise-ready API Boilerplate""
+    }});
+
+    // Correct JWT setup
+    c.AddSecurityDefinition(""Bearer"", new OpenApiSecurityScheme
+    {{
+        Name = ""Authorization"",
+        Type = SecuritySchemeType.Http,
+        Scheme = ""bearer"",
+        BearerFormat = ""JWT"",
+        In = ParameterLocation.Header,
+        Description = ""Paste ONLY your JWT token here (without 'Bearer ').""
+    }});
+
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {{
+        {{
+            new OpenApiSecurityScheme
+            {{
+                Reference = new OpenApiReference
+                {{
+                    Type = ReferenceType.SecurityScheme,
+                    Id = ""Bearer""
+                }}
+            }},
+            Array.Empty<string>()
+        }}
+    }});
+}});
 
 builder.Services.AddInfrastructure(builder.Configuration);
 
