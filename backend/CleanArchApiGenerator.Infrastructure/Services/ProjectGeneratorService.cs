@@ -158,6 +158,9 @@ namespace CleanArchApiGenerator.Infrastructure.Services
             // create fluent validation
             CreateFluentValidation(projectRoot, config.ProjectName);
 
+            // add db seeder
+            CreateDbSeeder(projectRoot, config.ProjectName);
+
             // Restore packages
             await _cliService.RunAsync(projectRoot, "restore");
 
@@ -207,6 +210,7 @@ namespace CleanArchApiGenerator.Infrastructure.Services
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.EntityFrameworkCore;
 using System.Text;
 using FluentValidation;
 using FluentValidation.AspNetCore;
@@ -216,6 +220,8 @@ using {projectName}.Infrastructure;
 using {projectName}.API.Middleware;
 using {projectName}.Application.Validators;
 using {projectName}.Application.Common.Results;
+using {projectName}.Infrastructure.Identity;
+using {projectName}.Infrastructure.Persistence;
 
 
 var builder = WebApplication.CreateBuilder(args);
@@ -304,6 +310,21 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 }});
 
 var app = builder.Build();
+
+using (var scope = app.Services.CreateScope())
+{{
+    var services = scope.ServiceProvider;
+    try
+    {{
+        await DbSeeder.SeedAsync(services);
+        Console.WriteLine(""Roles and default admin seeded successfully."");
+    }}
+    catch (Exception ex)
+    {{
+        var logger = services.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, ""An error occurred while seeding the database."");
+    }}
+}}
 
 app.UseGlobalExceptionHandling();
 
@@ -485,22 +506,26 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using {projectName}.Domain.Entities;
-using System.IdentityModel.Tokens.Jwt;
 
 namespace {projectName}.Infrastructure.Identity;
 
 public class JwtTokenService
 {{
     private readonly IConfiguration _configuration;
+    private readonly UserManager<ApplicationUser> _userManager;
 
-    public JwtTokenService(IConfiguration configuration)
+    public JwtTokenService(IConfiguration configuration, UserManager<ApplicationUser> userManager)
     {{
         _configuration = configuration;
+        _userManager = userManager;
     }}
 
     public string GenerateToken(ApplicationUser user)
     {{
         var jwtSettings = _configuration.GetSection(""Jwt"");
+        var rolesTask = _userManager.GetRolesAsync(user);
+        rolesTask.Wait();
+        var roles = rolesTask.Result;
 
         var claims = new List<Claim>
         {{
@@ -508,6 +533,8 @@ public class JwtTokenService
             new Claim(JwtRegisteredClaimNames.Email, user.Email ?? """"),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         }};
+
+        claims.AddRange(roles.Select(role => new Claim(ClaimTypes.Role, role)));
 
         var key = new SymmetricSecurityKey(
             Encoding.UTF8.GetBytes(jwtSettings[""Key""]!));
@@ -527,6 +554,7 @@ public class JwtTokenService
         return new JwtSecurityTokenHandler().WriteToken(token);
     }}
 }}
+
 ";
 
             File.WriteAllText(
@@ -805,5 +833,66 @@ namespace {projectName}.Application.Validators
                 content);
         }
 
+        private void CreateDbSeeder(string projectRoot, string projectName)
+        {
+            var identityFolder = Path.Combine(
+                projectRoot,
+                $"{projectName}.Infrastructure",
+                "Identity");
+
+            var content = $@"
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.DependencyInjection;
+using {projectName}.Domain.Entities;
+
+namespace {projectName}.Infrastructure.Identity
+{{
+    public static class DbSeeder
+    {{
+        public static async Task SeedAsync(IServiceProvider services)
+        {{
+            var roleManager = services.GetRequiredService<RoleManager<IdentityRole>>();
+            var userManager = services.GetRequiredService<UserManager<ApplicationUser>>();
+
+            // Roles
+            string[] roles = new[] {{ ""Admin"", ""User"" }};
+            foreach (var role in roles)
+            {{
+                if (!await roleManager.RoleExistsAsync(role))
+                {{
+                    await roleManager.CreateAsync(new IdentityRole(role));
+                }}
+            }}
+
+            // Default admin user
+            string adminEmail = ""admin@example.com"";
+            string adminPassword = ""Admin@123"";
+
+            var adminUser = await userManager.FindByEmailAsync(adminEmail);
+            if (adminUser == null)
+            {{
+                adminUser = new ApplicationUser
+                {{
+                    UserName = adminEmail,
+                    Email = adminEmail,
+                    EmailConfirmed = true
+                }};
+
+                var result = await userManager.CreateAsync(adminUser, adminPassword);
+                if (result.Succeeded)
+                {{
+                    await userManager.AddToRoleAsync(adminUser, ""Admin"");
+                }}
+            }}
+        }}
+    }}
+}}
+
+";
+
+            File.WriteAllText(
+                Path.Combine(identityFolder, "DbSeeder.cs"),
+                content);
+        }
     }
 }
